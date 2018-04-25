@@ -1,4 +1,3 @@
-import argparse
 import copy
 import os
 import torch
@@ -23,11 +22,7 @@ def evaluate(model, args, data, mode='test'):
     acc, loss, size = 0, 0, 0
 
     for batch in iterator:
-        if args.data_type == 'SNLI':
-            s1, s2 = 'premise', 'hypothesis'
-        else:
-            s1, s2 = 'q1', 'q2'
-
+        s1, s2 = 'premise', 'hypothesis'
         s1, s2 = getattr(batch, s1), getattr(batch, s2)
         kwargs = {'p': s1, 'h': s2}
 
@@ -81,11 +76,7 @@ def train(args, data):
             print('epoch:', present_epoch + 1)
         last_epoch = present_epoch
 
-        if args.data_type == 'SNLI':
-            s1, s2 = 'premise', 'hypothesis'
-        else:
-            s1, s2 = 'q1', 'q2'
-
+        s1, s2 = 'premise', 'hypothesis'
         s1, s2 = getattr(batch, s1), getattr(batch, s2)
 
         # limit the lengths of input sentences up to max_sent_len
@@ -149,31 +140,9 @@ def train(args, data):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', default=64, type=int)
-    parser.add_argument('--char-dim', default=20, type=int)
-    parser.add_argument('--char-hidden-size', default=50, type=int)
-    parser.add_argument('--data-type', default='SNLI')
-    parser.add_argument('--dropout', default=0.1, type=float)
-    parser.add_argument('--epoch', default=3, type=int)
-    parser.add_argument('--gpu', default=0, type=int)
-    parser.add_argument('--hidden-size', default=100, type=int)
-    parser.add_argument('--learning-rate', default=0.001, type=float)
-    parser.add_argument('--max-sent-len', default=-1, type=int)
-    parser.add_argument('--num-perspective', default=20, type=int)
-    parser.add_argument('--print-freq', default=500, type=int)
-    parser.add_argument('--use-char-emb', default=False, action='store_true')
-    parser.add_argument('--word-dim', default=300, type=int)
-    args = parser.parse_args()
-
-    if args.data_type == 'SNLI':
-        print('loading SNLI data...')
-        data = SNLI(args)
-    elif args.data_type == 'Quora':
-        print('loading Quora data...')
-        data = Quora(args)
-    else:
-        raise NotImplementedError('only SNLI or Quora data is possible')
+    from args import args
+    print('loading SNLI data...')
+    data = SNLI(args)
 
     setattr(args, 'char_vocab_size', len(data.char_vocab))
     setattr(args, 'word_vocab_size', len(data.TEXT.vocab))
@@ -186,11 +155,27 @@ def main():
 
     if not os.path.exists('results'):
         os.makedirs('results')
-    torch.save(best_model.state_dict(),
-               f'results/baseline.pt')
-
+    torch.save(best_model.state_dict(), 'results/baseline.pt')
     print('training finished!')
 
 
+def test():
+    from args import args
+    data = SNLI(args)
+    setattr(args, 'char_vocab_size', len(data.char_vocab))
+    setattr(args, 'word_vocab_size', len(data.TEXT.vocab))
+    setattr(args, 'class_size', len(data.LABEL.vocab))
+    setattr(args, 'max_word_len', data.max_word_len)
+
+    model = BIMPM(args, data)
+    model.load_state_dict(torch.load('results/baseline.pt'))
+    if args.gpu > -1:
+        model.cuda(args.gpu)
+
+    _, acc = evaluate(model, args, data)
+    print(f'test acc: {acc:.3f}')
+
+
 if __name__ == '__main__':
-    main()
+    # main()
+    test()
