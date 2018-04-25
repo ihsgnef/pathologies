@@ -2,3 +2,4 @@ glove
 snli_bimpm/__pycache__/
 snli_bimpm/data/
 snli_bimpm/results/
+snli_bimpm/.vector_cache/
