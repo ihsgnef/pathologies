@@ -11,7 +11,7 @@ from bimpm import BIMPM
 from dataset import SNLI
 
 
-def evaluate(model, args, data, mode='test'):
+def evaluate(model, conf, data, mode='test'):
     if mode == 'dev':
         iterator = iter(data.dev_iter)
     else:
@@ -26,13 +26,13 @@ def evaluate(model, args, data, mode='test'):
         s1, s2 = getattr(batch, s1), getattr(batch, s2)
         kwargs = {'p': s1, 'h': s2}
 
-        if args.use_char_emb:
+        if conf.use_char_emb:
             char_p = Variable(torch.LongTensor(data.characterize(s1)))
             char_h = Variable(torch.LongTensor(data.characterize(s2)))
 
-            if args.gpu > -1:
-                char_p = char_p.cuda(args.gpu)
-                char_h = char_h.cuda(args.gpu)
+            if conf.gpu > -1:
+                char_p = char_p.cuda(conf.gpu)
+                char_h = char_h.cuda(conf.gpu)
 
             kwargs['char_p'] = char_p
             kwargs['char_h'] = char_h
@@ -52,16 +52,16 @@ def evaluate(model, args, data, mode='test'):
     return loss, acc
 
 
-def train(args, data):
-    model = BIMPM(args, data)
-    if args.gpu > -1:
-        model.cuda(args.gpu)
+def train(conf, data):
+    model = BIMPM(conf, data)
+    if conf.gpu > -1:
+        model.cuda(conf.gpu)
 
     parameters = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = optim.Adam(parameters, lr=args.lr)
+    optimizer = optim.Adam(parameters, lr=conf.lr)
     criterion = nn.CrossEntropyLoss()
 
-    # writer = SummaryWriter(log_dir='runs/' + args.model_time)
+    # writer = SummaryWriter(log_dir='runs/' + conf.model_time)
 
     model.train()
     loss, last_epoch = 0, -1
@@ -70,31 +70,33 @@ def train(args, data):
     iterator = data.train_iter
     for i, batch in enumerate(iterator):
         present_epoch = int(iterator.epoch)
-        if present_epoch == args.epoch:
+        if present_epoch == conf.epoch:
             break
         if present_epoch > last_epoch:
             print('epoch:', present_epoch + 1)
+            ckp_dir = 'results/baseline_checkpoints/baseline_epoch_{}.pt'
+            torch.save(model.state_dict(), ckp_dir.format(present_epoch + 1))
         last_epoch = present_epoch
 
         s1, s2 = 'premise', 'hypothesis'
         s1, s2 = getattr(batch, s1), getattr(batch, s2)
 
         # limit the lengths of input sentences up to max_sent_len
-        if args.max_sent_len >= 0:
-            if s1.size()[1] > args.max_sent_len:
-                s1 = s1[:, :args.max_sent_len]
-            if s2.size()[1] > args.max_sent_len:
-                s2 = s2[:, :args.max_sent_len]
+        if conf.max_sent_len >= 0:
+            if s1.size()[1] > conf.max_sent_len:
+                s1 = s1[:, :conf.max_sent_len]
+            if s2.size()[1] > conf.max_sent_len:
+                s2 = s2[:, :conf.max_sent_len]
 
         kwargs = {'p': s1, 'h': s2}
 
-        if args.use_char_emb:
+        if conf.use_char_emb:
             char_p = Variable(torch.LongTensor(data.characterize(s1)))
             char_h = Variable(torch.LongTensor(data.characterize(s2)))
 
-            if args.gpu > -1:
-                char_p = char_p.cuda(args.gpu)
-                char_h = char_h.cuda(args.gpu)
+            if conf.gpu > -1:
+                char_p = char_p.cuda(conf.gpu)
+                char_h = char_h.cuda(conf.gpu)
 
             kwargs['char_p'] = char_p
             kwargs['char_h'] = char_h
@@ -108,11 +110,10 @@ def train(args, data):
         batch_loss.backward()
         optimizer.step()
 
-        if (i + 1) % args.print_freq == 0:
-            dev_loss, dev_acc = evaluate(model, args, data, mode='dev')
-            test_loss, test_acc = evaluate(model, args, data)
-            c = (i + 1) // args.print_freq
-
+        if (i + 1) % conf.print_freq == 0:
+            dev_loss, dev_acc = evaluate(model, conf, data, mode='dev')
+            test_loss, test_acc = evaluate(model, conf, data)
+            # c = (i + 1) // conf.print_freq
             # writer.add_scalar('loss/train', loss, c)
             # writer.add_scalar('loss/dev', dev_loss, c)
             # writer.add_scalar('acc/dev', dev_acc, c)
@@ -135,23 +136,21 @@ def train(args, data):
 
     # writer.close()
     print(f'max dev acc: {max_dev_acc:.3f} / max test acc: {max_test_acc:.3f}')
-
     return best_model
 
 
 def main():
-    from args import args
+    from args import conf
     print('loading SNLI data...')
-    data = SNLI(args)
-
-    setattr(args, 'char_vocab_size', len(data.char_vocab))
-    setattr(args, 'word_vocab_size', len(data.TEXT.vocab))
-    setattr(args, 'class_size', len(data.LABEL.vocab))
-    setattr(args, 'max_word_len', data.max_word_len)
-    setattr(args, 'model_time', strftime('%H:%M:%S', gmtime()))
+    data = SNLI(conf)
+    setattr(conf, 'char_vocab_size', len(data.char_vocab))
+    setattr(conf, 'word_vocab_size', len(data.TEXT.vocab))
+    setattr(conf, 'class_size', len(data.LABEL.vocab))
+    setattr(conf, 'max_word_len', data.max_word_len)
+    setattr(conf, 'model_time', strftime('%H:%M:%S', gmtime()))
 
     print('training start!')
-    best_model = train(args, data)
+    best_model = train(conf, data)
 
     if not os.path.exists('results'):
         os.makedirs('results')
@@ -160,22 +159,22 @@ def main():
 
 
 def test():
-    from args import args
-    data = SNLI(args)
-    setattr(args, 'char_vocab_size', len(data.char_vocab))
-    setattr(args, 'word_vocab_size', len(data.TEXT.vocab))
-    setattr(args, 'class_size', len(data.LABEL.vocab))
-    setattr(args, 'max_word_len', data.max_word_len)
+    from args import conf
+    data = SNLI(conf)
+    setattr(conf, 'char_vocab_size', len(data.char_vocab))
+    setattr(conf, 'word_vocab_size', len(data.TEXT.vocab))
+    setattr(conf, 'class_size', len(data.LABEL.vocab))
+    setattr(conf, 'max_word_len', data.max_word_len)
 
-    model = BIMPM(args, data)
+    model = BIMPM(conf, data)
     model.load_state_dict(torch.load('results/baseline.pt'))
-    if args.gpu > -1:
-        model.cuda(args.gpu)
+    if conf.gpu > -1:
+        model.cuda(conf.gpu)
 
-    _, acc = evaluate(model, args, data)
+    _, acc = evaluate(model, conf, data)
     print(f'test acc: {acc:.3f}')
 
 
 if __name__ == '__main__':
-    # main()
-    test()
+    main()
+    # test()

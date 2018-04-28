@@ -9,7 +9,7 @@ from nltk import word_tokenize
 
 class SNLI():
 
-    def __init__(self, args):
+    def __init__(self, conf):
         self.TEXT = data.Field(batch_first=True, tokenize=word_tokenize,
                                lower=True)
         self.LABEL = data.Field(sequential=False, unk_token=None)
@@ -32,8 +32,8 @@ class SNLI():
 
         self.train_iter, self.dev_iter, self.test_iter = \
             data.BucketIterator.splits((self.train, self.dev, self.test),
-                                       batch_sizes=[args.batch_size] * 3,
-                                       device=args.gpu)
+                                       batch_sizes=[conf.batch_size] * 3,
+                                       device=conf.gpu)
 
         self.max_word_len = max([len(w) for w in self.TEXT.vocab.itos])
         # for <pad>
@@ -42,7 +42,7 @@ class SNLI():
         self.characterized_words = [[0 for _ in range(self.max_word_len)],
                                     [0 for _ in range(self.max_word_len)]]
 
-        if args.use_char_emb:
+        if conf.use_char_emb:
             self.build_char_vocab()
 
     def build_char_vocab(self):

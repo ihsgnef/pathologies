@@ -1,7 +1,7 @@
-import math
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.autograd import Variable, variable
+from torch.autograd import Variable
 from collections import namedtuple
 
 # This follows semantics of numpy.finfo.
@@ -47,14 +47,14 @@ def probs_to_logits(probs, is_binary=False):
         return torch.log(ps_clamped) - torch.log1p(-ps_clamped)
     return torch.log(ps_clamped)
 
+
 def entropy(probs):
     logits = probs_to_logits(probs)
     p_log_p = logits * probs
     return -p_log_p.sum(-1)
 
+
 if __name__ == '__main__':
-    import numpy as np
-    from torch.autograd import Variable
     a = Variable(torch.from_numpy(np.random.random((10, 200))))
     probs = F.softmax(a)
     print(entropy(probs))

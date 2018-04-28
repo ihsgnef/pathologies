@@ -224,7 +224,7 @@ class BIMPM(nn.Module):
         p = self.word_emb(input_p)
         h = self.word_emb(input_h)
         if embed_grad_hook is not None:
-            h.legister_hook(embed_grad_hook)
+            h.register_hook(embed_grad_hook)
 
         if self.args.use_char_emb:
             # (batch, seq_len, max_word_len) -> (batch * seq_len, max_word_len)

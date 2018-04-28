@@ -28,7 +28,7 @@ def is_under_git_control():
     return is_return_code_zero(['git', 'rev-parse'])
 
 
-def prepare_output_dir(args, out_dir=None, name=None,
+def prepare_output_dir(args, outdir=None, name=None,
                        argv=None, time_format='%Y%m%dT%H%M%S.%f'):
     """Prepare a directory for outputting training results.
 
@@ -49,7 +49,7 @@ def prepare_output_dir(args, out_dir=None, name=None,
 
     Args:
         args (dict or argparse.Namespace): Arguments to save
-        out_dir (str or None): If str is specified, the output
+        outdir (str or None): If str is specified, the output
             directory is created under that path. If not specified, it is
             created as a new temporary directory instead.
         argv (list or None): The list of command line arguments passed to a
@@ -62,16 +62,16 @@ def prepare_output_dir(args, out_dir=None, name=None,
     name_str = datetime.datetime.now().strftime(time_format)
     if name is not None:
         name_str += '_' + name
-    if out_dir is not None:
-        if os.path.exists(out_dir):
-            if not os.path.isdir(out_dir):
+    if outdir is not None:
+        if os.path.exists(outdir):
+            if not os.path.isdir(outdir):
                 raise RuntimeError(
-                    '{} is not a directory'.format(out_dir))
-        out_dir = os.path.join(out_dir, name_str)
-        if os.path.exists(out_dir):
-            raise RuntimeError('{} exists'.format(out_dir))
+                    '{} is not a directory'.format(outdir))
+        outdir = os.path.join(outdir, name_str)
+        if os.path.exists(outdir):
+            raise RuntimeError('{} exists'.format(outdir))
         else:
-            os.makedirs(out_dir)
+            os.makedirs(outdir)
     else:
         outdir = tempfile.mkdtemp(prefix=name_str)
 
