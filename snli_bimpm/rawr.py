@@ -227,7 +227,8 @@ def main():
                           batch.hypothesis.data.cpu(),
                           batch.label.data.cpu())
 
-        reduced, removed_indices = get_rawr(model, batch, max_beam_size=5)
+        reduced, removed_indices = get_rawr(
+                model, batch, max_beam_size=rawr_conf.max_beam_size)
         for i in range(batch_size):
             og = {
                 'premise': batch_cpu.premise[i],
@@ -263,9 +264,18 @@ def main():
                     'label_readable': a_vocab[pred],
                     'removed_indices': removed_indices[i][j]
                     })
-    out_path = os.path.join(out_dir, 'rawr.{}.pkl'.format(args.fold))
-    with open(out_path, 'wb') as f:
-        pickle.dump(checkpoint, f)
+        if batch_i % 500 == 0 and batch_i > 0:
+            out_path = os.path.join(
+                    out_dir, 'rawr.{}.{}.pkl'.format(args.fold, batch_i))
+            with open(out_path, 'wb') as f:
+                pickle.dump(checkpoint, f)
+            checkpoint = []
+
+    if len(checkpoint) > 0:
+        out_path = os.path.join(
+                out_dir, 'rawr.{}.{}.pkl'.format(args.fold, batch_i))
+        with open(out_path, 'wb') as f:
+            pickle.dump(checkpoint, f)
 
 
 if __name__ == '__main__':

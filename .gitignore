@@ -1,7 +1,9 @@
 glove
+*.pyc
 snli_bimpm/__pycache__/
 snli_bimpm/data/
 snli_bimpm/results/
 snli_bimpm/.vector_cache/
 snli_bimpm/*.swp
 snli_bimpm/.ipynb_checkpoints
+squad_drqa/drqa/__pycache__/
