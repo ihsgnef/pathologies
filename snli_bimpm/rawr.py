@@ -25,9 +25,9 @@ class Batch:
 def real_length(x):
     # length of vector without padding
     if isinstance(x, Variable):
-        return sum(x.data.cpu().numpy() != 1)
+        return sum(x.data != 1)
     else:
-        return sum(x.cpu().numpy() != 1)
+        return sum(x != 1)
 
 
 def get_onehot_grad(model, batch):
@@ -113,8 +113,9 @@ def remove_one(model, batch, n_beams, indices, removed_indices, max_beam_size):
 
 
 def get_rawr(model, batch, target=None, max_beam_size=5):
-    target = model(batch.premise, batch.hypothesis)
-    target = torch.max(target, 1)[1].data.cpu().numpy()
+    if target is None:
+        target = model(batch.premise, batch.hypothesis)
+        target = torch.max(target, 1)[1].data.cpu().numpy()
 
     batch = Batch(batch.premise, batch.hypothesis, batch.label)
     n_examples, _ = batch.hypothesis.shape
@@ -193,6 +194,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--fold', required=True)
     parser.add_argument('--baseline', default='results/baseline.pt')
+    parser.add_argument('--truth', default=False,
+                        help='use label instead of prediction as target')
     args = parser.parse_args()
 
     data = SNLI(conf)
@@ -217,6 +220,9 @@ def main():
 
     checkpoint = []
     for batch_i, batch in enumerate(tqdm(datasets[args.fold])):
+        if batch_i > len(datasets[args.fold]):
+            # otherwise train iter will loop forever!
+            break
         batch_size = batch.hypothesis.shape[0]
         model.eval()
         output = F.softmax(model(batch.premise, batch.hypothesis), 1)

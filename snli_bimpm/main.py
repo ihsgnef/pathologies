@@ -4,7 +4,6 @@ import torch
 
 from torch import nn, optim
 from torch.autograd import Variable
-from tensorboardX import SummaryWriter
 from time import gmtime, strftime
 
 from bimpm import BIMPM
@@ -60,8 +59,6 @@ def train(conf, data):
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = optim.Adam(parameters, lr=conf.lr)
     criterion = nn.CrossEntropyLoss()
-
-    # writer = SummaryWriter(log_dir='runs/' + conf.model_time)
 
     model.train()
     loss, last_epoch = 0, -1
@@ -176,5 +173,5 @@ def test():
 
 
 if __name__ == '__main__':
-    main()
-    # test()
+    # main()
+    test()
