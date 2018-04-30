@@ -107,7 +107,7 @@ class BIMPM(nn.Module):
     def dropout(self, v):
         return F.dropout(v, p=self.args.dropout, training=self.training)
 
-    def forward(self, input_p, input_h, embed_grad_hook=None):
+    def forward(self, input_p, input_h, embed_grad_hook=None, p_not_h=False):
         # ----- Matching Layer -----
         def mp_matching_func(v1, v2, w):
             """
@@ -224,7 +224,10 @@ class BIMPM(nn.Module):
         p = self.word_emb(input_p)
         h = self.word_emb(input_h)
         if embed_grad_hook is not None:
-            h.register_hook(embed_grad_hook)
+            if p_not_h:
+                p.register_hook(embed_grad_hook)
+            else:
+                h.register_hook(embed_grad_hook)
 
         if self.args.use_char_emb:
             # (batch, seq_len, max_word_len) -> (batch * seq_len, max_word_len)

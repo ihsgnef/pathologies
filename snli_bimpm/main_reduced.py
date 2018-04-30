@@ -146,10 +146,9 @@ def main():
     from args import conf
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-            '--train', default='results/rawr.train.baseline.pkl')
-    parser.add_argument(
-            '--dev', default='results/rawr.dev.baseline.pkl')
+    parser.add_argument('--train', default='results/rawr.train.baseline.pkl')
+    parser.add_argument('--dev', default='results/rawr.dev.baseline.pkl')
+    parser.add_argument('--truth', default=False)
     args = parser.parse_args()
 
     conf.train_data = args.train
@@ -172,7 +171,7 @@ def main():
 
     train = [(x['premise'], x['hypothesis'], x['prediction'])
              for ex in train for x in ex['reduced']]
-    dev = [(x['premise'], x['hypothesis'], x['prediction'])
+    dev = [(x['premise'], x['hypothesis'], x['label'])
            for ex in dev for x in ex['reduced']]
 
     train_batches = batchify(train, conf.batch_size)
