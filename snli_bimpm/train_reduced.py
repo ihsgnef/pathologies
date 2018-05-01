@@ -75,6 +75,7 @@ def train_reduced(model, train_batches, dev_batches, conf):
     batch_i = 0
     epoch_i = 0
     model.train()
+    random.shuffle(train_batches)
     while True:
         batch = train_batches[batch_i]
         prem, hypo, label = batch
@@ -111,10 +112,9 @@ def train_reduced(model, train_batches, dev_batches, conf):
             writer.add_scalar('loss/dev', dev_loss, c)
             writer.add_scalar('acc/train', train_acc, c)
             writer.add_scalar('acc/dev', dev_acc, c)
-            print(f'train loss: {loss:.3f} / \
-                    dev loss: {dev_loss:.3f}',
-                  f'train acc: {train_acc:.3f} / \
-                    dev acc: {dev_acc:.3f}')
+            print('batch {}/{}  '.format(batch_i, len(train_batches)) +
+                  'train loss {:.3f} acc {:.3f}  '.format(loss, train_acc) +
+                  'dev loss {:.3f} acc {:.3f}'.format(dev_loss, dev_acc))
 
             if dev_acc > max_dev_acc:
                 max_dev_acc = dev_acc
@@ -146,9 +146,14 @@ def main():
     from args import conf
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--train', default='results/rawr.train.baseline.pkl')
-    parser.add_argument('--dev', default='results/rawr.dev.baseline.pkl')
-    parser.add_argument('--truth', default=False)
+    parser.add_argument('--train', default='results/rawr.train.hypothesis.pkl')
+    parser.add_argument('--dev', default='results/rawr.dev.hypothesis.pkl')
+    parser.add_argument('--truth', default=False, action='store_true',
+                        help='use label instead of prediction as target')
+    parser.add_argument('--ogdev', default=False, action='store_true',
+                        help='use original dev set instead of reduced')
+    parser.add_argument('--full', default=0, type=float,
+                        help='amount of full examples to include')
     args = parser.parse_args()
 
     conf.train_data = args.train
@@ -169,13 +174,32 @@ def main():
     with open(conf.dev_data, 'rb') as f:
         dev = pickle.load(f)
 
-    train = [(x['premise'], x['hypothesis'], x['prediction'])
+    train_label = 'label' if args.truth else 'prediction'
+    train = [(x['premise'], x['hypothesis'], ex['original'][train_label])
              for ex in train for x in ex['reduced']]
+    # dev = [(x['premise'], x['hypothesis'], x['label'])
+    #        for ex in dev for x in ex['reduced']]
     dev = [(x['premise'], x['hypothesis'], x['label'])
-           for ex in dev for x in ex['reduced']]
+           for ex in dev for x in ex['reduced'][:1]]
 
     train_batches = batchify(train, conf.batch_size)
-    dev_batches = batchify(train, conf.batch_size)
+
+    if args.full > 0:
+        n_examples = int(len(regular_data.train_iter) * args.full)
+        print('use {} ({}) of full training data'.format(
+            n_examples, args.full))
+        full_batches = []
+        for j, x in enumerate(regular_data.train_iter):
+            if j > n_examples:
+                break
+            full_batches.append((x.premise, x.hypothesis, x.label))
+        train_batches += full_batches
+
+    if args.ogdev:
+        dev_batches = list(regular_data.dev_iter)
+        dev_batches = [(x.premise, x.hypothesis, x.label) for x in dev_batches]
+    else:
+        dev_batches = batchify(train, conf.batch_size)
 
     model = BIMPM(conf, regular_data)
     if conf.gpu > -1:

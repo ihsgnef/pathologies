@@ -39,7 +39,10 @@ def get_onehot_grad(model, batch, p_not_h=False):
             extracted_grads[name] = grad
         return hook
 
-    batch_size, length = batch.hypothesis.shape
+    if p_not_h:
+        batch_size, length = batch.premise.shape
+    else:
+        batch_size, length = batch.hypothesis.shape
     batch.premise.volatile = False
     batch.hypothesis.volatile = False
     model.eval()
@@ -80,7 +83,7 @@ def remove_one(model, batch, n_beams, indices, removed_indices, max_beam_size,
     new_n_beams = []
     new_indices = []
     new_removed_indices = []
-    real_lengths = [real_length(x) for x in batch.premise]
+    real_lengths = [real_length(x) for x in s2]
 
     for example_idx in range(n_examples):
         if n_beams[example_idx] == 0:
@@ -158,7 +161,7 @@ def get_rawr(model, batch, target=None, max_beam_size=5, p_not_h=False):
         max_beam_size = min(s2.shape[1], max_beam_size)
         batch, n_beams, indices, removed_indices = remove_one(
                 model, batch, n_beams,  indices,
-                removed_indices, max_beam_size)
+                removed_indices, max_beam_size, p_not_h=p_not_h)
         model.eval()
         prediction = model(batch.premise, batch.hypothesis)
         prediction = torch.max(prediction, 1)[1].data.cpu().numpy()
@@ -229,9 +232,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--fold', required=True)
     parser.add_argument('--baseline', default='results/baseline.pt')
-    parser.add_argument('--pnoth', default=False,
+    parser.add_argument('--pnoth', default=False, action='store_true',
                         help='reduce premise instead of hypothesis')
-    parser.add_argument('--truth', default=False,
+    parser.add_argument('--truth', default=False, action='store_true',
                         help='use label instead of prediction as target')
     args = parser.parse_args()
 
@@ -277,7 +280,7 @@ def main():
 
         reduced, removed_indices = get_rawr(
                 model, batch, max_beam_size=rawr_conf.max_beam_size,
-                p_not_h=args.p)
+                p_not_h=args.pnoth)
         for i in range(batch_size):
             og = {
                 'premise': batch_cpu.premise[i],
@@ -292,8 +295,12 @@ def main():
                 }
             checkpoint.append({'original': og, 'reduced': []})
             s1 = batch.hypothesis[i] if args.pnoth else batch.premise[i]
+            if conf.gpu > -1:
+                s1 = s1.cuda()
             for j, s2 in enumerate(reduced[i]):
-                s2 = Variable(torch.LongTensor(s2)).cuda()
+                s2 = Variable(torch.LongTensor(s2))
+                if conf.gpu > -1:
+                    s2 = s2.cuda()
                 model.eval()
                 if args.pnoth:
                     output = model(s2.unsqueeze(0), s1.unsqueeze(0))
@@ -303,12 +310,10 @@ def main():
                 pred_scores, pred = torch.max(output, 1)
                 pred = pred.data[0]
                 pred_scores = pred_scores.data[0]
-                s1 = s1.data.cpu()
-                s2 = s2.data.cpu()
                 if args.pnoth:
-                    hypo, prem = s1, s2
+                    hypo, prem = s1.data.cpu(), s2.data.cpu()
                 else:
-                    prem, hypo = s1, s2
+                    prem, hypo = s1.data.cpu(), s2.data.cpu()
                 checkpoint[-1]['reduced'].append({
                     'premise': prem,
                     'hypothesis': hypo,
