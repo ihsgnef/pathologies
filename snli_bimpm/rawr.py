@@ -134,7 +134,13 @@ def remove_one(model, batch, n_beams, indices, removed_indices, max_beam_size,
     return batch, new_n_beams, new_indices, new_removed_indices
 
 
-def get_rawr(model, batch, target=None, max_beam_size=5, p_not_h=False):
+def get_rawr(model, batch, target=None, max_beam_size=5, conf_threshold=-1,
+             p_not_h=False):
+    '''
+    Args:
+        p_not_h: reduce premise instead of hypothesis
+        conf_threshold: (lower) threshold on confidence
+    '''
     if target is None:
         target = model(batch.premise, batch.hypothesis)
         target = torch.max(target, 1)[1].data.cpu().numpy()
@@ -163,8 +169,10 @@ def get_rawr(model, batch, target=None, max_beam_size=5, p_not_h=False):
                 model, batch, n_beams,  indices,
                 removed_indices, max_beam_size, p_not_h=p_not_h)
         model.eval()
-        prediction = model(batch.premise, batch.hypothesis)
-        prediction = torch.max(prediction, 1)[1].data.cpu().numpy()
+        output = F.softmax(model(batch.premise, batch.hypothesis), 1)
+        scores, preds = torch.max(output, 1)
+        scores = scores.data.cpu().numpy()
+        preds = preds.data.cpu().numpy()
 
         if p_not_h:
             s1, s2 = batch.hypothesis, batch.premise
@@ -177,22 +185,25 @@ def get_rawr(model, batch, target=None, max_beam_size=5, p_not_h=False):
         for example_idx in range(n_examples):
             beam_size = 0
             for i in range(start, start + n_beams[example_idx]):
-                if prediction[i] == target[example_idx]:
+                if preds[i] == target[example_idx] \
+                        and scores[i] >= conf_threshold:
                     new_length = real_length(s2[i])
-                    hypo = s2[i].data.cpu().numpy()
-                    hypo = [int(x) for x in hypo if x != 1]
+                    ns2 = s2[i].data.cpu().numpy()
+                    ns2 = [int(x) for x in ns2 if x != 1]
                     if new_length == final_length[example_idx]:
-                        if hypo not in final_s2[example_idx]:
-                            final_s2[example_idx].append(hypo)
+                        if ns2 not in final_s2[example_idx]:
+                            final_s2[example_idx].append(ns2)
                             final_removed[example_idx].append(
                                     removed_indices[i])
                     elif new_length < final_length[example_idx]:
-                        final_s2[example_idx] = [hypo]
+                        final_s2[example_idx] = [ns2]
                         final_removed[example_idx] = [removed_indices[i]]
                         final_length[example_idx] = new_length
                     if new_length == 1:
+                        # this whols beam is length 1
+                        # do not expand this beam
                         beam_size = 0
-                        break
+                        # break
                     else:
                         beam_size += 1
                         new_s2.append(s2[i])
@@ -203,6 +214,7 @@ def get_rawr(model, batch, target=None, max_beam_size=5, p_not_h=False):
             n_beams[example_idx] = beam_size
 
         if len(new_s2) == 0:
+            # nothing to expand
             break
 
         new_s1 = torch.stack(new_s1, 0)
@@ -280,7 +292,7 @@ def main():
 
         reduced, removed_indices = get_rawr(
                 model, batch, max_beam_size=rawr_conf.max_beam_size,
-                p_not_h=args.pnoth)
+                conf_threshold=rawr_conf.conf_threshold, p_not_h=args.pnoth)
         for i in range(batch_size):
             og = {
                 'premise': batch_cpu.premise[i],

@@ -65,9 +65,6 @@ class DocReaderModel(object):
             if 'ent_optimizer' in state_dict:
                 self.ent_optimizer.load_state_dict(state_dict['ent_optimizer'])
 
-
-
-
     def update_entropy(self, ex, gamma=0.01):
         self.network.train()
         if self.opt['cuda']:

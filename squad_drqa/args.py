@@ -1,4 +1,3 @@
-import os
 import argparse
 
 conf = argparse.Namespace()
@@ -36,6 +35,10 @@ conf.use_qemb = True
 conf.weight_decay = 0
 conf.n_report = 100
 conf.n_eval = 4000
+
+rawr_conf = argparse.Namespace()
+rawr_conf.max_beam_size = 5
+rawr_conf.prob_threshold = 0.9
 
 tune_conf = argparse.Namespace()
 tune_conf.start_ent = 400  # number of regular batches before entropy

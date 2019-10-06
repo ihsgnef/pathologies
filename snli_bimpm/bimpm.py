@@ -107,7 +107,8 @@ class BIMPM(nn.Module):
     def dropout(self, v):
         return F.dropout(v, p=self.args.dropout, training=self.training)
 
-    def forward(self, input_p, input_h, embed_grad_hook=None, p_not_h=False):
+    def forward(self, input_p, input_h, embed_grad_hook=None, p_not_h=False,
+            get_last_hidden=False):
         # ----- Matching Layer -----
         def mp_matching_func(v1, v2, w):
             """
@@ -354,8 +355,11 @@ class BIMPM(nn.Module):
         x = self.dropout(x)
 
         # ----- Prediction Layer -----
-        x = F.tanh(self.pred_fc1(x))
-        x = self.dropout(x)
+        xx = F.tanh(self.pred_fc1(x))
+        x = self.dropout(xx)
         x = self.pred_fc2(x)
 
-        return x
+        if get_last_hidden:
+            return x, xx
+        else:
+            return x

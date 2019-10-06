@@ -13,10 +13,11 @@ conf.gpu = 0
 conf.epoch = 3
 conf.lr = 0.001
 conf.max_sent_len = -1
-conf.print_freq = 500
+conf.print_freq = 2000
 
 rawr_conf = argparse.Namespace()
-rawr_conf.max_beam_size = 5
+rawr_conf.max_beam_size = 2
+rawr_conf.conf_threshold = 0.9
 
 tune_conf = argparse.Namespace()
 tune_conf.n_mle = 2

@@ -74,9 +74,10 @@ def train_reduced(model, train_batches, dev_batches, conf):
     max_dev_acc = 0
     batch_i = 0
     epoch_i = 0
-    model.train()
+    best_model = copy.deepcopy(model)
     random.shuffle(train_batches)
     while True:
+        model.train()
         batch = train_batches[batch_i]
         prem, hypo, label = batch
         if conf.gpu > -1:
@@ -104,7 +105,7 @@ def train_reduced(model, train_batches, dev_batches, conf):
 
         batch_i += 1
 
-        if batch_i % conf.print_freq == 0:
+        if batch_i % conf.print_freq == 0 or batch_i == len(train_batches):
             train_acc = acc.cpu().data[0] / size
             dev_loss, dev_acc = evaluate(model, dev_batches, conf)
             c = (batch_i + 1) // conf.print_freq
@@ -186,14 +187,17 @@ def main():
 
     if args.full > 0:
         n_examples = int(len(regular_data.train_iter) * args.full)
-        print('use {} ({}) of full training data'.format(
-            n_examples, args.full))
+        print('use {} ({}) full training data'.format(
+            n_examples * conf.batch_size, args.full))
         full_batches = []
         for j, x in enumerate(regular_data.train_iter):
             if j > n_examples:
                 break
             full_batches.append((x.premise, x.hypothesis, x.label))
-        train_batches += full_batches
+        # train_batches += full_batches
+        train_batches = full_batches
+
+    print(len(train_batches))
 
     if args.ogdev:
         dev_batches = list(regular_data.dev_iter)
