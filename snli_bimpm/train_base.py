@@ -3,7 +3,6 @@ import os
 import torch
 
 from torch import nn, optim
-from torch.autograd import Variable
 from time import gmtime, strftime
 
 from bimpm import BIMPM
@@ -26,12 +25,11 @@ def evaluate(model, conf, data, mode='test'):
         kwargs = {'p': s1, 'h': s2}
 
         if conf.use_char_emb:
-            char_p = Variable(torch.LongTensor(data.characterize(s1)))
-            char_h = Variable(torch.LongTensor(data.characterize(s2)))
+            char_p = torch.LongTensor(data.characterize(s1))
+            char_h = torch.LongTensor(data.characterize(s2))
 
-            if conf.gpu > -1:
-                char_p = char_p.cuda(conf.gpu)
-                char_h = char_h.cuda(conf.gpu)
+            char_p = char_p.cuda(conf.device)
+            char_h = char_h.cuda(conf.device)
 
             kwargs['char_p'] = char_p
             kwargs['char_h'] = char_h
@@ -40,21 +38,20 @@ def evaluate(model, conf, data, mode='test'):
         pred = model(s1, s2)
 
         batch_loss = criterion(pred, batch.label)
-        loss += batch_loss.data[0]
+        loss += batch_loss.data.item()
 
         _, pred = pred.max(dim=1)
         acc += (pred == batch.label).sum().float()
         size += len(pred)
 
     acc /= size
-    acc = acc.cpu().data[0]
+    acc = acc.cpu().data.item()
     return loss, acc
 
 
 def train(conf, data):
     model = BIMPM(conf, data)
-    if conf.gpu > -1:
-        model.cuda(conf.gpu)
+    model = model.to(conf.device)
 
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = optim.Adam(parameters, lr=conf.lr)
@@ -88,12 +85,11 @@ def train(conf, data):
         kwargs = {'p': s1, 'h': s2}
 
         if conf.use_char_emb:
-            char_p = Variable(torch.LongTensor(data.characterize(s1)))
-            char_h = Variable(torch.LongTensor(data.characterize(s2)))
+            char_p = torch.LongTensor(data.characterize(s1))
+            char_h = torch.LongTensor(data.characterize(s2))
 
-            if conf.gpu > -1:
-                char_p = char_p.cuda(conf.gpu)
-                char_h = char_h.cuda(conf.gpu)
+            char_p = char_p.to(conf.device)
+            char_h = char_h.to(conf.device)
 
             kwargs['char_p'] = char_p
             kwargs['char_h'] = char_h
@@ -103,7 +99,7 @@ def train(conf, data):
 
         optimizer.zero_grad()
         batch_loss = criterion(pred, batch.label)
-        loss += batch_loss.data[0]
+        loss += batch_loss.data.item()
         batch_loss.backward()
         optimizer.step()
 
@@ -165,13 +161,12 @@ def test():
 
     model = BIMPM(conf, data)
     model.load_state_dict(torch.load('results/baseline.pt'))
-    if conf.gpu > -1:
-        model.cuda(conf.gpu)
+    model = model.to(conf.device)
 
     _, acc = evaluate(model, conf, data)
     print(f'test acc: {acc:.3f}')
 
 
 if __name__ == '__main__':
-    # main()
+    main()
     test()

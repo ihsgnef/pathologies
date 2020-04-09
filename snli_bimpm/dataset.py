@@ -33,7 +33,7 @@ class SNLI():
         self.train_iter, self.dev_iter, self.test_iter = \
             data.BucketIterator.splits((self.train, self.dev, self.test),
                                        batch_sizes=[conf.batch_size] * 3,
-                                       device=conf.gpu)
+                                       device=conf.device)
 
         self.max_word_len = max([len(w) for w in self.TEXT.vocab.itos])
         # for <pad>

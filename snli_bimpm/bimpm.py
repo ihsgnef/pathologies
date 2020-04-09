@@ -58,57 +58,57 @@ class BIMPM(nn.Module):
 
     def reset_parameters(self):
         # ----- Word Representation Layer -----
-        nn.init.uniform(self.char_emb.weight, -0.005, 0.005)
+        nn.init.uniform_(self.char_emb.weight, -0.005, 0.005)
         # zero vectors for padding
         self.char_emb.weight.data[0].fill_(0)
 
         # <unk> vectors is randomly initialized
-        nn.init.uniform(self.word_emb.weight.data[0], -0.1, 0.1)
+        nn.init.uniform_(self.word_emb.weight.data[0], -0.1, 0.1)
 
-        nn.init.kaiming_normal(self.char_LSTM.weight_ih_l0)
-        nn.init.constant(self.char_LSTM.bias_ih_l0, val=0)
-        nn.init.orthogonal(self.char_LSTM.weight_hh_l0)
-        nn.init.constant(self.char_LSTM.bias_hh_l0, val=0)
+        nn.init.kaiming_normal_(self.char_LSTM.weight_ih_l0)
+        nn.init.constant_(self.char_LSTM.bias_ih_l0, val=0)
+        nn.init.orthogonal_(self.char_LSTM.weight_hh_l0)
+        nn.init.constant_(self.char_LSTM.bias_hh_l0, val=0)
 
         # ----- Context Representation Layer -----
-        nn.init.kaiming_normal(self.context_LSTM.weight_ih_l0)
-        nn.init.constant(self.context_LSTM.bias_ih_l0, val=0)
-        nn.init.orthogonal(self.context_LSTM.weight_hh_l0)
-        nn.init.constant(self.context_LSTM.bias_hh_l0, val=0)
+        nn.init.kaiming_normal_(self.context_LSTM.weight_ih_l0)
+        nn.init.constant_(self.context_LSTM.bias_ih_l0, val=0)
+        nn.init.orthogonal_(self.context_LSTM.weight_hh_l0)
+        nn.init.constant_(self.context_LSTM.bias_hh_l0, val=0)
 
-        nn.init.kaiming_normal(self.context_LSTM.weight_ih_l0_reverse)
-        nn.init.constant(self.context_LSTM.bias_ih_l0_reverse, val=0)
-        nn.init.orthogonal(self.context_LSTM.weight_hh_l0_reverse)
-        nn.init.constant(self.context_LSTM.bias_hh_l0_reverse, val=0)
+        nn.init.kaiming_normal_(self.context_LSTM.weight_ih_l0_reverse)
+        nn.init.constant_(self.context_LSTM.bias_ih_l0_reverse, val=0)
+        nn.init.orthogonal_(self.context_LSTM.weight_hh_l0_reverse)
+        nn.init.constant_(self.context_LSTM.bias_hh_l0_reverse, val=0)
 
         # ----- Matching Layer -----
         for i in range(1, 9):
             w = getattr(self, f'mp_w{i}')
-            nn.init.kaiming_normal(w)
+            nn.init.kaiming_normal_(w)
 
         # ----- Aggregation Layer -----
-        nn.init.kaiming_normal(self.aggregation_LSTM.weight_ih_l0)
-        nn.init.constant(self.aggregation_LSTM.bias_ih_l0, val=0)
-        nn.init.orthogonal(self.aggregation_LSTM.weight_hh_l0)
-        nn.init.constant(self.aggregation_LSTM.bias_hh_l0, val=0)
+        nn.init.kaiming_normal_(self.aggregation_LSTM.weight_ih_l0)
+        nn.init.constant_(self.aggregation_LSTM.bias_ih_l0, val=0)
+        nn.init.orthogonal_(self.aggregation_LSTM.weight_hh_l0)
+        nn.init.constant_(self.aggregation_LSTM.bias_hh_l0, val=0)
 
-        nn.init.kaiming_normal(self.aggregation_LSTM.weight_ih_l0_reverse)
-        nn.init.constant(self.aggregation_LSTM.bias_ih_l0_reverse, val=0)
-        nn.init.orthogonal(self.aggregation_LSTM.weight_hh_l0_reverse)
-        nn.init.constant(self.aggregation_LSTM.bias_hh_l0_reverse, val=0)
+        nn.init.kaiming_normal_(self.aggregation_LSTM.weight_ih_l0_reverse)
+        nn.init.constant_(self.aggregation_LSTM.bias_ih_l0_reverse, val=0)
+        nn.init.orthogonal_(self.aggregation_LSTM.weight_hh_l0_reverse)
+        nn.init.constant_(self.aggregation_LSTM.bias_hh_l0_reverse, val=0)
 
         # ----- Prediction Layer ----
-        nn.init.uniform(self.pred_fc1.weight, -0.005, 0.005)
-        nn.init.constant(self.pred_fc1.bias, val=0)
+        nn.init.uniform_(self.pred_fc1.weight, -0.005, 0.005)
+        nn.init.constant_(self.pred_fc1.bias, val=0)
 
-        nn.init.uniform(self.pred_fc2.weight, -0.005, 0.005)
-        nn.init.constant(self.pred_fc2.bias, val=0)
+        nn.init.uniform_(self.pred_fc2.weight, -0.005, 0.005)
+        nn.init.constant_(self.pred_fc2.bias, val=0)
 
     def dropout(self, v):
         return F.dropout(v, p=self.args.dropout, training=self.training)
 
     def forward(self, input_p, input_h, embed_grad_hook=None, p_not_h=False,
-            get_last_hidden=False):
+                get_last_hidden=False):
         # ----- Matching Layer -----
         def mp_matching_func(v1, v2, w):
             """
@@ -250,16 +250,18 @@ class BIMPM(nn.Module):
             p = torch.cat([p, char_p], dim=-1)
             h = torch.cat([h, char_h], dim=-1)
 
-        p = self.dropout(p)
-        h = self.dropout(h)
+        if embed_grad_hook is None:
+            p = self.dropout(p)
+            h = self.dropout(h)
 
         # ----- Context Representation Layer -----
         # (batch, seq_len, hidden_size * 2)
         con_p, _ = self.context_LSTM(p)
         con_h, _ = self.context_LSTM(h)
 
-        con_p = self.dropout(con_p)
-        con_h = self.dropout(con_h)
+        if embed_grad_hook is None:
+            con_p = self.dropout(con_p)
+            con_h = self.dropout(con_h)
 
         # (batch, seq_len, hidden_size)
         con_p_fw, con_p_bw = torch.split(con_p, self.args.hidden_size, dim=-1)
@@ -340,8 +342,9 @@ class BIMPM(nn.Module):
             [mv_h_full_fw, mv_h_max_fw, mv_h_att_mean_fw, mv_h_att_max_fw,
              mv_h_full_bw, mv_h_max_bw, mv_h_att_mean_bw, mv_h_att_max_bw], dim=2)
 
-        mv_p = self.dropout(mv_p)
-        mv_h = self.dropout(mv_h)
+        if embed_grad_hook is None:
+            mv_p = self.dropout(mv_p)
+            mv_h = self.dropout(mv_h)
 
         # ----- Aggregation Layer -----
         # (batch, seq_len, l * 8) -> (2, batch, hidden_size)
@@ -352,11 +355,15 @@ class BIMPM(nn.Module):
         x = torch.cat(
             [agg_p_last.permute(1, 0, 2).contiguous().view(-1, self.args.hidden_size * 2),
              agg_h_last.permute(1, 0, 2).contiguous().view(-1, self.args.hidden_size * 2)], dim=1)
-        x = self.dropout(x)
+        if embed_grad_hook is None:
+            x = self.dropout(x)
 
         # ----- Prediction Layer -----
-        xx = F.tanh(self.pred_fc1(x))
-        x = self.dropout(xx)
+        xx = torch.tanh(self.pred_fc1(x))
+        if embed_grad_hook is None:
+            x = self.dropout(xx)
+        else:
+            x = xx
         x = self.pred_fc2(x)
 
         if get_last_hidden:

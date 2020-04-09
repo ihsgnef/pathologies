@@ -119,9 +119,8 @@ def remove_one(model, batch, n_beams, indices, removed_indices, max_beam_size,
             if len(partial_s2) > 0:
                 new_s2.append(torch.cat(partial_s2, 0))
                 new_s1.append(s1[i])
-                new_removed_indices.append(
-                        removed_indices[i] + [indices[i][j]])
-                new_indices.append(indices[i][:j] + indices[i][j+1:])
+                new_removed_indices.append(removed_indices[i] + [indices[i][j]])
+                new_indices.append(indices[i][:j] + indices[i][j + 1:])
                 cnt += 1
         new_n_beams.append(cnt)
         start += n_beams[example_idx]
@@ -166,8 +165,8 @@ def get_rawr(model, batch, target=None, max_beam_size=5, conf_threshold=-1,
     while True:
         max_beam_size = min(s2.shape[1], max_beam_size)
         batch, n_beams, indices, removed_indices = remove_one(
-                model, batch, n_beams,  indices,
-                removed_indices, max_beam_size, p_not_h=p_not_h)
+            model, batch, n_beams, indices,
+            removed_indices, max_beam_size, p_not_h=p_not_h)
         model.eval()
         output = F.softmax(model(batch.premise, batch.hypothesis), 1)
         scores, preds = torch.max(output, 1)
@@ -193,8 +192,7 @@ def get_rawr(model, batch, target=None, max_beam_size=5, conf_threshold=-1,
                     if new_length == final_length[example_idx]:
                         if ns2 not in final_s2[example_idx]:
                             final_s2[example_idx].append(ns2)
-                            final_removed[example_idx].append(
-                                    removed_indices[i])
+                            final_removed[example_idx].append(removed_indices[i])
                     elif new_length < final_length[example_idx]:
                         final_s2[example_idx] = [ns2]
                         final_removed[example_idx] = [removed_indices[i]]
@@ -291,8 +289,8 @@ def main():
                           batch.label.data.cpu())
 
         reduced, removed_indices = get_rawr(
-                model, batch, max_beam_size=rawr_conf.max_beam_size,
-                conf_threshold=rawr_conf.conf_threshold, p_not_h=args.pnoth)
+            model, batch, max_beam_size=rawr_conf.max_beam_size,
+            conf_threshold=rawr_conf.conf_threshold, p_not_h=args.pnoth)
         for i in range(batch_size):
             og = {
                 'premise': batch_cpu.premise[i],
@@ -304,7 +302,7 @@ def main():
                 'score': target_scores[i],
                 'label': batch_cpu.label[i],
                 'label_readable': a_vocab[batch_cpu.label[i]]
-                }
+            }
             checkpoint.append({'original': og, 'reduced': []})
             s1 = batch.hypothesis[i] if args.pnoth else batch.premise[i]
             if conf.gpu > -1:
@@ -338,17 +336,15 @@ def main():
                     'label_readable': a_vocab[batch_cpu.label[i]],
                     'removed_indices': removed_indices[i][j],
                     'which_reduced': 'premise' if args.pnoth else 'hypothesis'
-                    })
+                })
         if batch_i % 1000 == 0 and batch_i > 0:
-            out_path = os.path.join(
-                    out_dir, '{}.{}'.format(fname, batch_i))
+            out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
             with open(out_path, 'wb') as f:
                 pickle.dump(checkpoint, f)
             checkpoint = []
 
     if len(checkpoint) > 0:
-        out_path = os.path.join(
-                out_dir, '{}.{}'.format(fname, batch_i))
+        out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
         with open(out_path, 'wb') as f:
             pickle.dump(checkpoint, f)
 
