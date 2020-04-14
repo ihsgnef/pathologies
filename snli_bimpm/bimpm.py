@@ -104,11 +104,11 @@ class BIMPM(nn.Module):
         nn.init.uniform_(self.pred_fc2.weight, -0.005, 0.005)
         nn.init.constant_(self.pred_fc2.bias, val=0)
 
-    def dropout(self, v):
-        return F.dropout(v, p=self.args.dropout, training=self.training)
+    def dropout(self, v, no_dropout=False):
+        return F.dropout(v, p=self.args.dropout, training=(not no_dropout) and self.training)
 
     def forward(self, input_p, input_h, embed_grad_hook=None, p_not_h=False,
-                get_last_hidden=False):
+                get_last_hidden=False, no_dropout=False):
         # ----- Matching Layer -----
         def mp_matching_func(v1, v2, w):
             """
@@ -250,18 +250,16 @@ class BIMPM(nn.Module):
             p = torch.cat([p, char_p], dim=-1)
             h = torch.cat([h, char_h], dim=-1)
 
-        if embed_grad_hook is None:
-            p = self.dropout(p)
-            h = self.dropout(h)
+        p = self.dropout(p, no_dropout=no_dropout)
+        h = self.dropout(h, no_dropout=no_dropout)
 
         # ----- Context Representation Layer -----
         # (batch, seq_len, hidden_size * 2)
         con_p, _ = self.context_LSTM(p)
         con_h, _ = self.context_LSTM(h)
 
-        if embed_grad_hook is None:
-            con_p = self.dropout(con_p)
-            con_h = self.dropout(con_h)
+        con_p = self.dropout(con_p, no_dropout=no_dropout)
+        con_h = self.dropout(con_h, no_dropout=no_dropout)
 
         # (batch, seq_len, hidden_size)
         con_p_fw, con_p_bw = torch.split(con_p, self.args.hidden_size, dim=-1)
@@ -342,9 +340,8 @@ class BIMPM(nn.Module):
             [mv_h_full_fw, mv_h_max_fw, mv_h_att_mean_fw, mv_h_att_max_fw,
              mv_h_full_bw, mv_h_max_bw, mv_h_att_mean_bw, mv_h_att_max_bw], dim=2)
 
-        if embed_grad_hook is None:
-            mv_p = self.dropout(mv_p)
-            mv_h = self.dropout(mv_h)
+        mv_p = self.dropout(mv_p, no_dropout=no_dropout)
+        mv_h = self.dropout(mv_h, no_dropout=no_dropout)
 
         # ----- Aggregation Layer -----
         # (batch, seq_len, l * 8) -> (2, batch, hidden_size)
@@ -355,18 +352,14 @@ class BIMPM(nn.Module):
         x = torch.cat(
             [agg_p_last.permute(1, 0, 2).contiguous().view(-1, self.args.hidden_size * 2),
              agg_h_last.permute(1, 0, 2).contiguous().view(-1, self.args.hidden_size * 2)], dim=1)
-        if embed_grad_hook is None:
-            x = self.dropout(x)
+        x = self.dropout(x, no_dropout=no_dropout)
 
         # ----- Prediction Layer -----
-        xx = torch.tanh(self.pred_fc1(x))
-        if embed_grad_hook is None:
-            x = self.dropout(xx)
-        else:
-            x = xx
+        final_layer = torch.tanh(self.pred_fc1(x))
+        x = self.dropout(final_layer, no_dropout=no_dropout)
         x = self.pred_fc2(x)
 
         if get_last_hidden:
-            return x, xx
+            return x, final_layer
         else:
             return x
