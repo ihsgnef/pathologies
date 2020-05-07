@@ -16,7 +16,7 @@ class SNLI():
 
         print('loading data from {}'.format('data/'))
         self.train, self.dev, self.test = datasets.SNLI.splits(
-                self.TEXT, self.LABEL, root='data/')
+            self.TEXT, self.LABEL, root='data/')
 
         vector_cache = '.vector_cache/vocab.vectors.pt'
         if os.path.isfile(vector_cache):

@@ -113,9 +113,11 @@ def train_reduced(model, train_batches, dev_batches, conf):
             writer.add_scalar('loss/dev', dev_loss, c)
             writer.add_scalar('acc/train', train_acc, c)
             writer.add_scalar('acc/dev', dev_acc, c)
-            print('batch {}/{}  '.format(batch_i, len(train_batches)) +
-                  'train loss {:.3f} acc {:.3f}  '.format(loss, train_acc) +
-                  'dev loss {:.3f} acc {:.3f}'.format(dev_loss, dev_acc))
+            print((
+                'batch {}/{}  '.format(batch_i, len(train_batches))
+                + 'train loss {:.3f} acc {:.3f}  '.format(loss, train_acc)
+                + 'dev loss {:.3f} acc {:.3f}'.format(dev_loss, dev_acc)
+            ))
 
             if dev_acc > max_dev_acc:
                 max_dev_acc = dev_acc
@@ -133,8 +135,7 @@ def train_reduced(model, train_batches, dev_batches, conf):
             size = 0
             print('epoch:', epoch_i)
             if epoch_i == conf.epoch:
-                ckp_dir = os.path.join(
-                        conf.out_dir, 'epoch_{}.pt'.format(epoch_i))
+                ckp_dir = os.path.join(conf.out_dir, 'epoch_{}.pt'.format(epoch_i))
                 torch.save(model.state_dict(), ckp_dir)
                 break
 
