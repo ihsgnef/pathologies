@@ -5,11 +5,11 @@ from typing import List
 
 import torchtext
 from nltk import word_tokenize
-
-import allennlp_models.nli
 from allennlp.data import Instance
 from allennlp.data.fields import TextField
 from allennlp.predictors import Predictor
+import allennlp_models.nli
+import allennlp_models.sentiment
 
 
 def real_sequence_length(text_field: TextField, ignore_tokens: List[str] = ['@@NULL@@']):
@@ -24,7 +24,7 @@ def remove_one_token(
         predictor: Predictor,
         instances: List[Instance],
         reduction_field_name: str,
-        gradient_name: str,
+        gradient_field_name: str,
         n_beams: List[int],
         indices: List[List[int]],
         removed_indices: List[List[int]],
@@ -54,7 +54,7 @@ def remove_one_token(
 
     # one forward-backward pass to get the score of each token in the batch
     gradients, outputs = predictor.get_gradients(instances)
-    grads = gradients[gradient_name]
+    grads = gradients[gradient_field_name]
     onehot_grad = np.einsum('bld,bld->bl', grads, grads)
 
     # beams of example_idx: batch[start: start + n_beams[example_idx]]
@@ -63,7 +63,7 @@ def remove_one_token(
     new_n_beams = [0 for _ in range(n_examples)]
     new_indices = []
     new_removed_indices = []
-    current_lengths = [real_sequence_length(x[reduction_field_name]) for x in instances]
+    current_lengths = [real_sequence_length(x[reduction_field_name], ignore_tokens) for x in instances]
 
     for example_idx in range(n_examples):
         """
@@ -126,7 +126,8 @@ def reduce_instances(
         predictor: Predictor,
         instances: List[Instance],
         reduction_field_name: str,
-        gradient_name: str,
+        gradient_field_name: str,
+        probs_field_name: str,
         max_beam_size: int = 5,
         prob_threshold: float = -1,
         min_sequence_length: int = 1,
@@ -165,7 +166,8 @@ def reduce_instances(
     :param predictor:
     :param instances:
     :param reduction_field_name:
-    :param gradient_name:
+    :param gradient_field_name:
+    :param probs_field_name:
     :param max_beam_size:
     :param prob_threshold:
     """
@@ -205,7 +207,7 @@ def reduce_instances(
             predictor,
             instances,
             reduction_field_name=reduction_field_name,
-            gradient_name=gradient_name,
+            gradient_field_name=gradient_field_name,
             n_beams=n_beams,
             indices=indices,
             removed_indices=removed_indices,
@@ -223,15 +225,15 @@ def reduce_instances(
         new_indices = []
         new_n_beams = [0 for _ in range(n_examples)]
         new_removed_indices = []
-        current_lengths = [real_sequence_length(x[reduction_field_name]) for x in instances]
+        current_lengths = [real_sequence_length(x[reduction_field_name], ignore_tokens) for x in instances]
 
         for example_idx in range(n_examples):
             original_field = original_instances[example_idx][reduction_field_name]
             original_length = real_sequence_length(original_field, ignore_tokens)
             for i in range(start, start + n_beams[example_idx]):
                 assert current_lengths[i] + len(removed_indices[i]) == original_length
-                reduced_prediction = np.argmax(outputs[i]['label_probs'])
-                reduced_score = outputs[i]['label_probs'][reduced_prediction]
+                reduced_prediction = np.argmax(outputs[i][probs_field_name])
+                reduced_score = outputs[i][probs_field_name][reduced_prediction]
                 original_prediction = original_instances[example_idx]['label'].label
                 if (
                         reduced_prediction == original_prediction
@@ -280,19 +282,23 @@ def reduce_instances(
     return shortest_instances, shortest_removed_indices
 
 
-def main():
+def snli():
     predictor = Predictor.from_path(
         'https://storage.googleapis.com/allennlp-public-models/decomposable-attention-elmo-2020.04.09.tar.gz',
         predictor_name='textual-entailment',
         cuda_device=0,
     )
 
-    print('loading data from {}'.format('data/'))
     train, dev, test = torchtext.datasets.SNLI.splits(
-        torchtext.data.Field(batch_first=True, tokenize=word_tokenize, lower=True),
+        torchtext.data.Field(batch_first=True, tokenize=word_tokenize, lower=False),
         torchtext.data.Field(sequential=False, unk_token=None),
         root='data/')
     dataset = dev
+
+    ignore_tokens = ["@@NULL@@"]
+    reduction_field_name = 'hypothesis'
+    gradient_field_name = 'grad_input_1'
+    probs_field_name = 'label_probs'
 
     batch_size = 10
     checkpoint = []
@@ -301,44 +307,40 @@ def main():
         if batch_start > 30:
             break
 
-        examples = dataset[batch_start: batch_start + batch_size]
-        n_examples = len(examples)
         inputs = [{
             'premise': ' '.join(x.premise),
             'hypothesis': ' '.join(x.hypothesis),
             'label': x.label,
-        } for x in examples]
-
-        instances = predictor._batch_json_to_instances(inputs)
-        outputs = predictor.predict_batch_instance(instances)
-        instances = [predictor.predictions_to_labeled_instances(i, o)[0] for i, o in zip(instances, outputs)]
+        } for x in dataset[batch_start: batch_start + batch_size]]
+        original_instances = predictor._batch_json_to_instances(inputs)
+        original_outputs = predictor.predict_batch_instance(original_instances)
+        instances = [predictor.predictions_to_labeled_instances(i, o)[0]
+                     for i, o in zip(original_instances, original_outputs)]
 
         reduced_instances, removed_indices = reduce_instances(
             predictor,
             instances,
-            reduction_field_name='hypothesis',
-            gradient_name='grad_input_1',
+            reduction_field_name=reduction_field_name,
+            gradient_field_name=gradient_field_name,
+            probs_field_name=probs_field_name,
             max_beam_size=5,
+            ignore_tokens=ignore_tokens,
         )
 
-        reduced_instances = [x[0] for x in reduced_instances]
-        removed_indices = [x[0] for x in removed_indices]
+        reduced_outputs = predictor.predict_batch_instance(reduced_instances)
+        original_predictions = [np.argmax(x[probs_field_name]) for x in original_outputs]
+        reduced_predictions = [np.argmax(x[probs_field_name]) for x in reduced_outputs]
+        assert original_predictions == reduced_predictions
 
-        for example_idx in range(n_examples):
-            reduced_instance = reduced_instances[example_idx]
-            removed = removed_indices[example_idx]
-            original_example = inputs[example_idx]
-
-            reduced_example = {
-                'premise': real_text(reduced_instance['premise']),
-                'hypothesis': real_text(reduced_instance['hypothesis']),
-                'label': original_example['label'],
-            }
-
+        for example_idx, original_instance in enumerate(inputs):
             checkpoint.append({
-                'original': original_example,
-                'reduced': reduced_example,
-                'removed_indices': removed,
+                'original': original_instance,
+                'reduced': {
+                    'premise': real_text(reduced_instances[example_idx]['premise'], ignore_tokens),
+                    'hypothesis': real_text(reduced_instances[example_idx]['hypothesis'], ignore_tokens),
+                    'label': original_instance['label'],
+                },
+                'removed_indices': removed_indices[example_idx],
             })
 
 #         if batch_i % 1000 == 0 and batch_i > 0:
@@ -355,5 +357,76 @@ def main():
         json.dump(checkpoint, f)
 
 
+def sst():
+    predictor = Predictor.from_path(
+        'https://s3-us-west-2.amazonaws.com/allennlp/models/sst-2-basic-classifier-glove-2019.06.27.tar.gz',
+        predictor_name='text_classifier',
+        cuda_device=0,
+    )
+
+    train, dev, test = torchtext.datasets.SST.splits(
+        torchtext.data.Field(batch_first=True, tokenize=word_tokenize, lower=False),
+        torchtext.data.Field(sequential=False, unk_token=None),
+        root='data/')
+    dataset = dev
+
+    batch_size = 10
+    checkpoint = []
+    for batch_start in range(0, len(dataset), batch_size):
+
+        if batch_start > 30:
+            break
+
+        inputs = [{
+            'sentence': ' '.join(x.text),
+            'label': x.label,
+        } for x in dataset[batch_start: batch_start + batch_size]]
+        n_examples = len(inputs)
+        original_instances = predictor._batch_json_to_instances(inputs)
+        original_outputs = predictor.predict_batch_instance(original_instances)
+        instances = [predictor.predictions_to_labeled_instances(i, o)[0]
+                     for i, o in zip(original_instances, original_outputs)]
+
+        reduced_instances, removed_indices = reduce_instances(
+            predictor,
+            instances,
+            reduction_field_name='tokens',
+            gradient_field_name='grad_input_1',
+            probs_field_name='probs',
+            max_beam_size=5,
+        )
+
+        for example_idx in range(n_examples):
+            checkpoint.append({
+                'original': inputs[example_idx],
+                'reduced': {
+                    'sentence': real_text(reduced_instances[example_idx]['tokens']),
+                    'label': inputs[example_idx]['label'],
+                },
+                'removed_indices': removed_indices[example_idx],
+            })
+
+#         if batch_i % 1000 == 0 and batch_i > 0:
+#             out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
+#             with open(out_path, 'wb') as f:
+#                 pickle.dump(checkpoint, f)
+#             checkpoint = []
+#
+#     if len(checkpoint) > 0:
+#         out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
+#         with open(out_path, 'wb') as f:
+#             pickle.dump(checkpoint, f)
+    with open('reduced_dev.json', 'w') as f:
+        json.dump(checkpoint, f)
+
+
+def squad():
+    single_id = SingleIdTokenIndexer(lowercase_tokens=True)
+    reader = SquadReader(token_indexers={'tokens': single_id})
+    dev_dataset = reader.read('https://s3-us-west-2.amazonaws.com/allennlp/datasets/squad/squad-dev-v1.1.json')
+    # Load the model and its associated vocabulary.
+    model = load_archive('https://s3-us-west-2.amazonaws.com/allennlp/models/bidaf-glove-2019.05.09.tar.gz').model
+
+
 if __name__ == '__main__':
-    main()
+    sst()
