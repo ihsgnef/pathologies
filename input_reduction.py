@@ -28,6 +28,8 @@ def remove_one_token(
         n_beams: List[int],
         indices: List[List[int]],
         removed_indices: List[List[int]],
+        token_id_field_name: str = None,
+        embedding_weight: np.ndarray = None,
         max_beam_size: int = 5,
         min_sequence_length: int = 1,
         ignore_tokens: List[str] = ['@@NULL@@'],
@@ -56,8 +58,13 @@ def remove_one_token(
     # one forward-backward pass to get the score of each token in the batch
     gradients, outputs = predictor.get_gradients(instances)
     grads = gradients[gradient_field_name]
-    # TODO taking gradient norm here, do hotflip attack if embedding_weight is provided
-    onehot_grad = np.einsum('bld,bld->bl', grads, grads)
+
+    if embedding_weight:
+        token_ids = outputs[token_id_field_name].cpu().numpy()
+        hotflip_grad = np.einsum('bld,kd->blk', grads, embedding_weight)
+        onehot_grad = np.take(hotflip_grad, token_ids)
+    else:
+        onehot_grad = np.einsum('bld,bld->bl', grads, grads)
 
     # beams of example_idx: batch[start: start + n_beams[example_idx]]
     start = 0
@@ -134,6 +141,8 @@ def reduce_instances(
         reduction_field_name: str,
         gradient_field_name: str,
         probs_field_name: str,
+        token_id_field_name: str = None,
+        embedding_weight: np.ndarray = None,
         max_beam_size: int = 5,
         prob_threshold: float = -1,
         min_sequence_length: int = 1,
@@ -337,6 +346,11 @@ def snli():
         assert original_predictions == reduced_predictions
 
         for example_idx, original_instance in enumerate(inputs):
+            print(original_instances[example_idx][reduction_field_name].tokens)
+            print(reduced_instances[example_idx][reduction_field_name].tokens)
+            print(original_predictions[example_idx], '->', reduced_predictions[example_idx])
+            print()
+
             checkpoint.append({
                 'original': original_instance,
                 'reduced': {
@@ -347,16 +361,6 @@ def snli():
                 'removed_indices': removed_indices[example_idx],
             })
 
-#         if batch_i % 1000 == 0 and batch_i > 0:
-#             out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
-#             with open(out_path, 'wb') as f:
-#                 pickle.dump(checkpoint, f)
-#             checkpoint = []
-#
-#     if len(checkpoint) > 0:
-#         out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
-#         with open(out_path, 'wb') as f:
-#             pickle.dump(checkpoint, f)
     with open('reduced_dev.json', 'w') as f:
         json.dump(checkpoint, f)
 
@@ -367,12 +371,20 @@ def sst():
         predictor_name='text_classifier',
         cuda_device=0,
     )
+    embedding = predictor._model._text_field_embedder._modules['token_embedder_tokens']
+    embedding_weight = embedding.weight.cpu().detach().numpy()
 
     train, dev, test = torchtext.datasets.SST.splits(
         torchtext.data.Field(batch_first=True, tokenize=word_tokenize, lower=False),
         torchtext.data.Field(sequential=False, unk_token=None),
         root='data/')
     dataset = dev
+
+    reduction_field_name = 'tokens'
+    token_id_field_name = 'token_ids'
+    gradient_field_name = 'grad_input_1'
+    probs_field_name = 'probs'
+    ignore_tokens = []
 
     batch_size = 10
     checkpoint = []
@@ -394,13 +406,25 @@ def sst():
         reduced_instances, removed_indices = reduce_instances(
             predictor,
             instances,
-            reduction_field_name='tokens',
-            gradient_field_name='grad_input_1',
-            probs_field_name='probs',
+            reduction_field_name=reduction_field_name,
+            token_id_field_name=token_id_field_name,
+            gradient_field_name=gradient_field_name,
+            probs_field_name=probs_field_name,
+            embedding_weight=embedding_weight,
             max_beam_size=5,
+            ignore_tokens=ignore_tokens,
         )
 
+        reduced_outputs = predictor.predict_batch_instance(reduced_instances)
+        original_predictions = [np.argmax(x[probs_field_name]) for x in original_outputs]
+        reduced_predictions = [np.argmax(x[probs_field_name]) for x in reduced_outputs]
+
         for example_idx in range(n_examples):
+            print(instances[example_idx][reduction_field_name].tokens)
+            print(reduced_instances[example_idx][reduction_field_name].tokens)
+            print(original_predictions[example_idx], '->', reduced_predictions[example_idx])
+            print()
+
             checkpoint.append({
                 'original': inputs[example_idx],
                 'reduced': {
@@ -410,29 +434,9 @@ def sst():
                 'removed_indices': removed_indices[example_idx],
             })
 
-#         if batch_i % 1000 == 0 and batch_i > 0:
-#             out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
-#             with open(out_path, 'wb') as f:
-#                 pickle.dump(checkpoint, f)
-#             checkpoint = []
-#
-#     if len(checkpoint) > 0:
-#         out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
-#         with open(out_path, 'wb') as f:
-#             pickle.dump(checkpoint, f)
     with open('reduced_dev.json', 'w') as f:
         json.dump(checkpoint, f)
 
 
-def squad():
-    single_id = SingleIdTokenIndexer(lowercase_tokens=True)
-    reader = SquadReader(token_indexers={'tokens': single_id})
-    dev_dataset = reader.read('https://s3-us-west-2.amazonaws.com/allennlp/datasets/squad/squad-dev-v1.1.json')
-    predictor = Predictor.from_path(
-        'https://s3-us-west-2.amazonaws.com/allennlp/models/bidaf-glove-2019.05.09.tar.gz',
-        predictor_name='reading-comprehension',
-    )
-
-
 if __name__ == '__main__':
-    sst()
+    snli()

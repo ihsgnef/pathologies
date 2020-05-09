@@ -259,93 +259,26 @@ def replace_instances(
     )
 
 
-def snli():
-    predictor = Predictor.from_path(
-        'https://storage.googleapis.com/allennlp-public-models/decomposable-attention-elmo-2020.04.09.tar.gz',
-        predictor_name='textual-entailment',
-        cuda_device=0,
-    )
-
-    train, dev, test = torchtext.datasets.SNLI.splits(
-        torchtext.data.Field(batch_first=True, tokenize=word_tokenize, lower=False),
-        torchtext.data.Field(sequential=False, unk_token=None),
-        root='data/')
-    dataset = dev
-
-    ignore_tokens = ["@@NULL@@"]
-    reduction_field_name = 'hypothesis'
-    gradient_field_name = 'grad_input_1'
-    probs_field_name = 'label_probs'
-
-    batch_size = 10
-    checkpoint = []
-    for batch_start in range(0, len(dataset), batch_size):
-
-        if batch_start > 30:
-            break
-
-        inputs = [{
-            'premise': ' '.join(x.premise),
-            'hypothesis': ' '.join(x.hypothesis),
-            'label': x.label,
-        } for x in dataset[batch_start: batch_start + batch_size]]
-        original_instances = predictor._batch_json_to_instances(inputs)
-        original_outputs = predictor.predict_batch_instance(original_instances)
-        instances = [predictor.predictions_to_labeled_instances(i, o)[0]
-                     for i, o in zip(original_instances, original_outputs)]
-
-        reduced_instances, removed_indices = reduce_instances(
-            predictor,
-            instances,
-            reduction_field_name=reduction_field_name,
-            gradient_field_name=gradient_field_name,
-            probs_field_name=probs_field_name,
-            max_beam_size=5,
-            ignore_tokens=ignore_tokens,
-        )
-
-        reduced_outputs = predictor.predict_batch_instance(reduced_instances)
-        original_predictions = [np.argmax(x[probs_field_name]) for x in original_outputs]
-        reduced_predictions = [np.argmax(x[probs_field_name]) for x in reduced_outputs]
-        assert original_predictions == reduced_predictions
-
-        for example_idx, original_instance in enumerate(inputs):
-            checkpoint.append({
-                'original': original_instance,
-                'reduced': {
-                    'premise': real_text(reduced_instances[example_idx]['premise'], ignore_tokens),
-                    'hypothesis': real_text(reduced_instances[example_idx]['hypothesis'], ignore_tokens),
-                    'label': original_instance['label'],
-                },
-                'removed_indices': removed_indices[example_idx],
-            })
-
-#         if batch_i % 1000 == 0 and batch_i > 0:
-#             out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
-#             with open(out_path, 'wb') as f:
-#                 pickle.dump(checkpoint, f)
-#             checkpoint = []
-#
-#     if len(checkpoint) > 0:
-#         out_path = os.path.join(out_dir, '{}.{}'.format(fname, batch_i))
-#         with open(out_path, 'wb') as f:
-#             pickle.dump(checkpoint, f)
-    with open('reduced_dev.json', 'w') as f:
-        json.dump(checkpoint, f)
-
-
 def sst():
     predictor = Predictor.from_path(
         'https://s3-us-west-2.amazonaws.com/allennlp/models/sst-2-basic-classifier-glove-2019.06.27.tar.gz',
         predictor_name='text_classifier',
         cuda_device=0,
     )
+    embedding = predictor._model._text_field_embedder._modules['token_embedder_tokens']
+    embedding_weight = embedding.weight.cpu().detach().numpy()
+    index_to_token = predictor._model.vocab._index_to_token['tokens']
 
     train, dev, test = torchtext.datasets.SST.splits(
         torchtext.data.Field(batch_first=True, tokenize=word_tokenize, lower=False),
         torchtext.data.Field(sequential=False, unk_token=None),
         root='data/')
     dataset = dev
+
+    reduction_field_name = 'tokens'
+    gradient_field_name = 'grad_input_1'
+    probs_field_name = 'probs'
+    ignore_tokens = []
 
     batch_size = 10
     checkpoint = []
@@ -363,24 +296,37 @@ def sst():
         original_outputs = predictor.predict_batch_instance(original_instances)
         instances = [predictor.predictions_to_labeled_instances(i, o)[0]
                      for i, o in zip(original_instances, original_outputs)]
-
-        reduced_instances, removed_indices = reduce_instances(
+        
+        replaced_instances, replaced_indices = replace_instances(
             predictor,
             instances,
-            reduction_field_name='tokens',
-            gradient_field_name='grad_input_1',
-            probs_field_name='probs',
+            reduction_field_name=reduction_field_name,
+            gradient_field_name=gradient_field_name,
+            probs_field_name=probs_field_name,
+            embedding_weight=embedding_weight,
+            index_to_token=index_to_token,
             max_beam_size=5,
+            max_replace_steps=4,
+            ignore_tokens=ignore_tokens,
         )
 
+        replaced_outputs = predictor.predict_batch_instance(replaced_instances)
+        original_predictions = [np.argmax(x[probs_field_name]) for x in original_outputs]
+        replaced_predictions = [np.argmax(x[probs_field_name]) for x in replaced_outputs]
+
         for example_idx in range(n_examples):
+            print(instances[example_idx]['tokens'].tokens)
+            print(replaced_instances[example_idx]['tokens'].tokens)
+            print(original_predictions[example_idx], '->', replaced_predictions[example_idx])
+            print()
+
             checkpoint.append({
                 'original': inputs[example_idx],
                 'reduced': {
-                    'sentence': real_text(reduced_instances[example_idx]['tokens']),
+                    'sentence': real_text(replaced_instances[example_idx]['tokens'], ignore_tokens),
                     'label': inputs[example_idx]['label'],
                 },
-                'removed_indices': removed_indices[example_idx],
+                'replaced_indices': replaced_indices[example_idx],
             })
 
 #         if batch_i % 1000 == 0 and batch_i > 0:
@@ -395,16 +341,6 @@ def sst():
 #             pickle.dump(checkpoint, f)
     with open('reduced_dev.json', 'w') as f:
         json.dump(checkpoint, f)
-
-
-def squad():
-    single_id = SingleIdTokenIndexer(lowercase_tokens=True)
-    reader = SquadReader(token_indexers={'tokens': single_id})
-    dev_dataset = reader.read('https://s3-us-west-2.amazonaws.com/allennlp/datasets/squad/squad-dev-v1.1.json')
-    predictor = Predictor.from_path(
-        'https://s3-us-west-2.amazonaws.com/allennlp/models/bidaf-glove-2019.05.09.tar.gz',
-        predictor_name='reading-comprehension',
-    )
 
 
 if __name__ == '__main__':
