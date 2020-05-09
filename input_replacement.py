@@ -1,11 +1,11 @@
 import json
 import numpy as np
 from copy import deepcopy
-from typing import List
+from typing import List, Dict
 
 import torchtext
 from nltk import word_tokenize
-from allennlp.data import Instance
+from allennlp.data import Instance, Token
 from allennlp.data.fields import TextField
 from allennlp.predictors import Predictor
 import allennlp_models.nli
@@ -20,16 +20,17 @@ def real_text(text_field: TextField, ignore_tokens: List[str] = ['@@NULL@@']):
     return ' '.join(x.text for x in text_field.tokens if x.text not in ignore_tokens)
 
 
-def remove_one_token(
+def replace_one_token(
         predictor: Predictor,
         instances: List[Instance],
         reduction_field_name: str,
         gradient_field_name: str,
         n_beams: List[int],
         indices: List[List[int]],
-        removed_indices: List[List[int]],
+        replaced_indices: List[List[int]],
+        embedding_weight: np.ndarray,
+        index_to_token: Dict[int, str],
         max_beam_size: int = 5,
-        min_sequence_length: int = 1,
         ignore_tokens: List[str] = ['@@NULL@@'],
 ):
     """
@@ -56,15 +57,15 @@ def remove_one_token(
     # one forward-backward pass to get the score of each token in the batch
     gradients, outputs = predictor.get_gradients(instances)
     grads = gradients[gradient_field_name]
-    # TODO taking gradient norm here, do hotflip attack if embedding_weight is provided
-    onehot_grad = np.einsum('bld,bld->bl', grads, grads)
+    hotflip_grad = np.einsum('bld,kd->blk', grads, embedding_weight)
+    sign = -1
 
     # beams of example_idx: batch[start: start + n_beams[example_idx]]
     start = 0
     new_instances = []
     new_n_beams = [0 for _ in range(n_examples)]
     new_indices = []
-    new_removed_indices = []
+    new_replaced_indices = []
     current_lengths = [real_sequence_length(x[reduction_field_name], ignore_tokens)
                        for x in instances]
 
@@ -79,14 +80,16 @@ def remove_one_token(
             continue
 
         # find beam-level candidates
-        candidates = []  # (batch_index i, token j)
+        candidates = []  # (batch_index i, token j, replacement k)
         for i in range(start, start + n_beams[example_idx]):
-            if current_lengths[i] <= min_sequence_length:
-                # nothing to reduce
-                continue
             field = instances[i][reduction_field_name]
+            # argsort the flattened scores
+            indices_sorted = np.argsort(sign * hotflip_grad[i].ravel())
+            # unravel into original shape
+            indices_sorted = np.unravel_index(indices_sorted, hotflip_grad[i].shape)
+            indices_sorted = np.stack(indices_sorted, 1)
             beam_candidates = [
-                (i, j) for j in np.argsort(- onehot_grad[i])
+                (i, j, k) for j, k in indices_sorted 
                 if (
                     j < field.sequence_length()
                     and field.tokens[j].text not in ignore_tokens
@@ -102,41 +105,43 @@ def remove_one_token(
         # gather scores of all example-level candidates
         # sort them to get example-level candidates
         candidates = np.asarray(candidates)
-        scores = onehot_grad[candidates[:, 0], candidates[:, 1]]
-        candidate_scores = sorted(zip(candidates, scores), key=lambda x: -x[1])
+        scores = hotflip_grad[candidates[:, 0], candidates[:, 1], candidates[:, 2]]
+        candidate_scores = sorted(zip(candidates, scores), key=lambda x: sign * x[1])
         candidates = [c for c, s in candidate_scores[:max_beam_size]]
 
         # each candidate should be a valid token in the beam it belongs
-        assert all(j < current_lengths[i] for i, j in candidates)
+        assert all(j < current_lengths[i] for i, j, k in candidates)
 
-        for i, j in candidates:
+        for i, j, k in candidates:
             new_instance = deepcopy(instances[i])
             new_instance[reduction_field_name].tokens = (
                 new_instance[reduction_field_name].tokens[0: j]
+                + [Token(index_to_token[k])]
                 + new_instance[reduction_field_name].tokens[j + 1:]
             )
             new_instance.indexed = False
 
             new_n_beams[example_idx] += 1
             new_instances.append(new_instance)
-            new_removed_indices.append(removed_indices[i] + [indices[i][j]])
-            new_indices.append(indices[i][:j] + indices[i][j + 1:])
+            new_replaced_indices.append(replaced_indices[i] + [indices[i][j]])
+            new_indices.append(indices[i])
 
         # move starting position to next example
         start += n_beams[example_idx]
 
-    return new_instances, new_n_beams, new_indices, new_removed_indices
+    return new_instances, new_n_beams, new_indices, new_replaced_indices
 
 
-def reduce_instances(
+def replace_instances(
         predictor: Predictor,
         instances: List[Instance],
         reduction_field_name: str,
         gradient_field_name: str,
         probs_field_name: str,
+        embedding_weight: np.ndarray,
+        index_to_token: Dict[int, str],
         max_beam_size: int = 5,
-        prob_threshold: float = -1,
-        min_sequence_length: int = 1,
+        max_replace_steps: int = 5,
         ignore_tokens: List[str] = ['@@NULL@@'],
 ):
     """
@@ -176,7 +181,6 @@ def reduce_instances(
     :param gradient_field_name:
     :param probs_field_name:
     :param max_beam_size:
-    :param prob_threshold:
     """
 
     if 'label' not in instances[0].fields:
@@ -190,32 +194,29 @@ def reduce_instances(
         i for i, token in enumerate(instance[reduction_field_name])
         if token.text not in ignore_tokens
     ] for instance in instances]
-    removed_indices = [[] for _ in range(n_examples)]
+    replaced_indices = [[] for _ in range(n_examples)]
 
-    # keep track of a single shortest reduced versions
-    shortest_instances = {i: deepcopy(x) for i, x in enumerate(instances)}
-    shortest_lengths = {
-        i: real_sequence_length(x[reduction_field_name], ignore_tokens)
-        for i, x in enumerate(instances)
-    }
-    shortest_removed_indices = {}
+    # perturbed instances that do not necessarily flip model prediction
+    final_instances = {i: deepcopy(instance) for i, instance in enumerate(instances)}
+    final_replaced_indices = {i: [] for i in range(n_examples)}
 
-    # to make sure predictions remain the same
+    # check if prediction is flipped
     original_instances = deepcopy(instances)
 
-    while True:
+    for _ in range(max_replace_steps):
         # all beams are reduced at the same pace
         # remove one token from each example
-        instances, n_beams, indices, removed_indices = remove_one_token(
+        instances, n_beams, indices, replaced_indices = replace_one_token(
             predictor,
             instances,
             reduction_field_name=reduction_field_name,
             gradient_field_name=gradient_field_name,
             n_beams=n_beams,
             indices=indices,
-            removed_indices=removed_indices,
+            replaced_indices=replaced_indices,
+            embedding_weight=embedding_weight,
+            index_to_token=index_to_token,
             max_beam_size=max_beam_size,
-            min_sequence_length=min_sequence_length,
             ignore_tokens=ignore_tokens,
         )
 
@@ -226,49 +227,20 @@ def reduce_instances(
         start = 0
         new_instances = []
         new_indices = []
+        new_replaced_indices = []
         new_n_beams = [0 for _ in range(n_examples)]
-        new_removed_indices = []
-        current_lengths = [real_sequence_length(x[reduction_field_name], ignore_tokens)
-                           for x in instances]
-
         for example_idx in range(n_examples):
-            original_field = original_instances[example_idx][reduction_field_name]
-            original_length = real_sequence_length(original_field, ignore_tokens)
             for i in range(start, start + n_beams[example_idx]):
-                assert current_lengths[i] + len(removed_indices[i]) == original_length
                 reduced_prediction = np.argmax(outputs[i][probs_field_name])
-                reduced_score = outputs[i][probs_field_name][reduced_prediction]
                 original_prediction = original_instances[example_idx]['label'].label
-                if (
-                        reduced_prediction == original_prediction
-                        and reduced_score >= prob_threshold
-                ):
-                    # check if this new valid reduced example is shorter than current
-                    # reduced_token_sequence = instances[i][reduction_field_name].tokens
-                    if current_lengths[i] < shortest_lengths[example_idx]:
-                        shortest_instances[example_idx] = deepcopy(instances[i])
-                        # shortest_token_sequences[example_idx] = [reduced_token_sequence]
-                        shortest_removed_indices[example_idx] = removed_indices[i]
-                        shortest_lengths[example_idx] = current_lengths[i]
-                    # elif (
-                    #     current_lengths[i] == shortest_lengths[example_idx]
-                    #     and reduced_token_sequence not in shortest_token_sequences[example_idx]
-                    # ):
-                    #     shortest_instances[example_idx].append(deepcopy(instances[i]))
-                    #     shortest_token_sequences[example_idx].append(reduced_token_sequence)
-                    #     shortest_removed_indices[example_idx].append(removed_indices[i])
-
-                    if current_lengths[i] <= min_sequence_length:
-                        # all beams of an example has the same length
-                        # this means all beams of this example has length 1
-                        # do not branch out from this example
-                        pass
-                    else:
-                        # beam valid, but not short enough, keep reducing
-                        new_n_beams[example_idx] += 1
-                        new_instances.append(instances[i])
-                        new_indices.append(indices[i])
-                        new_removed_indices.append(removed_indices[i])
+                final_instances[example_idx] = deepcopy(instances[i])
+                final_replaced_indices[example_idx] = replaced_indices[i]
+                if reduced_prediction == original_prediction:
+                    # prediction not flipped yet, keep replacing
+                    new_n_beams[example_idx] += 1
+                    new_instances.append(instances[i])
+                    new_indices.append(indices[i])
+                    new_replaced_indices.append(replaced_indices[i])
 
             # move cursor to next example then update the beam count of this example
             start += n_beams[example_idx]
@@ -279,11 +251,12 @@ def reduce_instances(
         instances = new_instances
         n_beams = new_n_beams
         indices = new_indices
-        removed_indices = new_removed_indices
+        replaced_indices = new_replaced_indices
 
-    shortest_instances = [shortest_instances[i] for i in range(n_examples)]
-    shortest_removed_indices = [shortest_removed_indices.get(i, []) for i in range(n_examples)]
-    return shortest_instances, shortest_removed_indices
+    return (
+        [final_instances[i] for i in range(n_examples)],
+        [final_replaced_indices[i] for i in range(n_examples)]
+    )
 
 
 def snli():
